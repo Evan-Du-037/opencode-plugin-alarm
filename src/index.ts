@@ -1,11 +1,18 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import type { Event } from '@opencode-ai/sdk'
+import path from 'path'
+import fs from 'fs'
 
-const TERMINAL_APPS = ['Terminal', 'iTerm2', 'WezTerm', 'Alacritty', 'kitty', 'Ghostty']
+const TERMINAL_APPS = ['Terminal', 'iTerm2', 'WezTerm', 'Alacritty', 'kitty', 'Ghostty', 'Electron', 'Code']
+const TERMINAL_BUNDLE_IDS: Record<string, string> = {
+  'vscode': 'com.microsoft.VSCode',
+  'Apple_Terminal': 'com.apple.Terminal',
+}
 const DEBOUNCE_MS = 3000
 const PREVIEW_LENGTH = 30
 
 let lastNotificationTime = 0
+let cachedNotifierPath: string | null = null
 
 function getErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error !== null && 'data' in error) {
@@ -18,27 +25,119 @@ function getErrorMessage(error: unknown): string {
   return '发生错误'
 }
 
+function detectTerminalBundleId(): string {
+  const termProgram = process.env.TERM_PROGRAM || ''
+  return TERMINAL_BUNDLE_IDS[termProgram] || 'com.apple.Terminal'
+}
+
+function getTerminalNotifierPath(): string | null {
+  if (cachedNotifierPath !== null) {
+    return cachedNotifierPath
+  }
+
+  const homeDir = process.env.HOME || ''
+  if (!homeDir) {
+    cachedNotifierPath = null
+    return null
+  }
+
+  const notifierPath = path.join(
+    homeDir,
+    '.config',
+    'opencode',
+    'plugins',
+    'bin',
+    'terminal-notifier.app',
+    'Contents',
+    'MacOS',
+    'terminal-notifier'
+  )
+
+  if (fs.existsSync(notifierPath)) {
+    cachedNotifierPath = notifierPath
+    return notifierPath
+  }
+
+  cachedNotifierPath = null
+  return null
+}
+
 async function isTerminalFocused(): Promise<boolean> {
   try {
     const script = `
       tell application "System Events"
         set frontApp to name of first application process whose frontmost is true
-        return frontApp
+        set frontAppProcess to first application process whose name is frontApp
+        try
+          set windowList to every window of frontAppProcess
+          set windowCount to count of windowList
+        on error
+          set windowCount to 0
+        end try
+        return {frontApp, windowCount}
       end tell
     `
     const result = Bun.spawnSync(['osascript', '-e', script])
-    const frontApp = result.stdout.toString().trim()
-    return TERMINAL_APPS.includes(frontApp)
+    const output = result.stdout.toString().trim()
+    
+    const parts = output.split(', ')
+    if (parts.length < 2) return false
+    
+    const frontApp = parts[0]
+    const windowCount = parseInt(parts[1], 10)
+    
+    if (windowCount === 0) return false
+    
+    if (TERMINAL_APPS.includes(frontApp)) return true
+    
+    if (frontApp === 'Electron' || frontApp === 'Code') {
+      return process.env.TERM_PROGRAM === 'vscode'
+    }
+    
+    return false
   } catch {
     return false
   }
 }
 
-async function sendNotification(title: string, message: string): Promise<void> {
+async function sendNotificationWithTerminalNotifier(title: string, message: string, bundleId: string): Promise<boolean> {
+  const notifierPath = getTerminalNotifierPath()
+  if (!notifierPath) {
+    return false
+  }
+
+  try {
+    const args = [
+      '-title', title,
+      '-message', message,
+      '-activate', bundleId,
+      '-sound', 'default',
+    ]
+
+    const result = Bun.spawnSync([notifierPath, ...args], {
+      timeout: 5000,
+    })
+
+    return result.exitCode === 0
+  } catch {
+    return false
+  }
+}
+
+async function sendNotificationWithOsascript(title: string, message: string): Promise<void> {
   const escapedTitle = title.replace(/"/g, '\\"')
   const escapedMessage = message.replace(/"/g, '\\"')
   const script = `display notification "${escapedMessage}" with title "${escapedTitle}"`
   Bun.spawnSync(['osascript', '-e', script])
+}
+
+async function sendNotification(title: string, message: string): Promise<void> {
+  const bundleId = detectTerminalBundleId()
+  const success = await sendNotificationWithTerminalNotifier(title, message, bundleId)
+  
+  if (!success) {
+    await sendNotificationWithOsascript(title, message)
+  }
 }
 
 function stripMarkdown(text: string): string {
