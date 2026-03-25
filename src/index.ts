@@ -103,8 +103,8 @@ async function isTerminalFocused(): Promise<boolean> {
     
     if (TERMINAL_APPS.includes(frontApp)) return true
     
-    if (frontApp === 'Electron' || frontApp === 'Code') {
-      return process.env.TERM_PROGRAM === 'vscode'
+    if (frontApp === 'Code' && process.env.TERM_PROGRAM === 'vscode') {
+      return true
     }
     
     return false
@@ -133,8 +133,8 @@ async function sendNotificationWithTerminalNotifier(
     if (terminalType === 'vscode') {
       const cwd = getCurrentWorkingDirectory()
       if (cwd) {
-        const vscodeUrl = `vscode://file/${cwd}`
-        args.push('-open', vscodeUrl)
+        const escapedPath = escapeShellArg(cwd)
+        args.push('-execute', `open -a 'Visual Studio Code' ${escapedPath}`)
       } else {
         args.push('-activate', 'com.microsoft.VSCode')
       }
