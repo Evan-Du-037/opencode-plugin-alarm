@@ -25,9 +25,10 @@ function getErrorMessage(error: unknown): string {
   return '发生错误'
 }
 
-function detectTerminalBundleId(): string {
+function detectTerminalType(): 'vscode' | 'terminal' {
   const termProgram = process.env.TERM_PROGRAM || ''
-  return TERMINAL_BUNDLE_IDS[termProgram] || 'com.apple.Terminal'
+  if (termProgram === 'vscode') return 'vscode'
+  return 'terminal'
 }
 
 function getTerminalNotifierPath(): string | null {
@@ -62,6 +63,18 @@ function getTerminalNotifierPath(): string | null {
   return null
 }
 
+function escapeShellArg(arg: string): string {
+  return "'" + arg.replace(/'/g, "'\\''") + "'"
+}
+
+function getCurrentWorkingDirectory(): string | null {
+  try {
+    return process.cwd() || null
+  } catch {
+    return null
+  }
+}
+
 async function isTerminalFocused(): Promise<boolean> {
   try {
     const script = `
@@ -74,19 +87,19 @@ async function isTerminalFocused(): Promise<boolean> {
         on error
           set windowCount to 0
         end try
-        return {frontApp, windowCount}
+        return frontApp & "|" & windowCount
       end tell
     `
     const result = Bun.spawnSync(['osascript', '-e', script])
     const output = result.stdout.toString().trim()
     
-    const parts = output.split(', ')
-    if (parts.length < 2) return false
+    const pipeIndex = output.lastIndexOf('|')
+    if (pipeIndex === -1) return false
     
-    const frontApp = parts[0]
-    const windowCount = parseInt(parts[1], 10)
+    const frontApp = output.substring(0, pipeIndex)
+    const windowCount = parseInt(output.substring(pipeIndex + 1), 10)
     
-    if (windowCount === 0) return false
+    if (isNaN(windowCount) || windowCount === 0) return false
     
     if (TERMINAL_APPS.includes(frontApp)) return true
     
@@ -100,19 +113,34 @@ async function isTerminalFocused(): Promise<boolean> {
   }
 }
 
-async function sendNotificationWithTerminalNotifier(title: string, message: string, bundleId: string): Promise<boolean> {
+async function sendNotificationWithTerminalNotifier(
+  title: string,
+  message: string,
+  terminalType: 'vscode' | 'terminal'
+): Promise<boolean> {
   const notifierPath = getTerminalNotifierPath()
   if (!notifierPath) {
     return false
   }
 
   try {
-    const args = [
+    const args: string[] = [
       '-title', title,
       '-message', message,
-      '-activate', bundleId,
       '-sound', 'default',
     ]
+
+    if (terminalType === 'vscode') {
+      const cwd = getCurrentWorkingDirectory()
+      if (cwd) {
+        const vscodeUrl = `vscode://file/${cwd}`
+        args.push('-open', vscodeUrl)
+      } else {
+        args.push('-activate', 'com.microsoft.VSCode')
+      }
+    } else {
+      args.push('-activate', 'com.apple.Terminal')
+    }
 
     const result = Bun.spawnSync([notifierPath, ...args], {
       timeout: 5000,
@@ -132,8 +160,8 @@ async function sendNotificationWithOsascript(title: string, message: string): Pr
 }
 
 async function sendNotification(title: string, message: string): Promise<void> {
-  const bundleId = detectTerminalBundleId()
-  const success = await sendNotificationWithTerminalNotifier(title, message, bundleId)
+  const terminalType = detectTerminalType()
+  const success = await sendNotificationWithTerminalNotifier(title, message, terminalType)
   
   if (!success) {
     await sendNotificationWithOsascript(title, message)
@@ -157,9 +185,28 @@ function stripMarkdown(text: string): string {
     .trim()
 }
 
-function extractTextPreview(parts: Array<{ type: string; text?: string }>): string {
+interface MessagePart {
+  type: string
+  text?: string
+}
+
+interface MessageInfo {
+  role?: string
+  error?: unknown
+}
+
+interface Message {
+  info: MessageInfo
+  parts?: MessagePart[]
+}
+
+function extractTextPreview(parts: unknown): string {
+  if (!parts || !Array.isArray(parts)) {
+    return 'AI 回复完成'
+  }
+  
   for (const part of parts) {
-    if (part.type === 'text' && part.text) {
+    if (part && typeof part === 'object' && part.type === 'text' && typeof part.text === 'string') {
       const text = stripMarkdown(part.text)
       if (text.length > PREVIEW_LENGTH) {
         return text.slice(0, PREVIEW_LENGTH) + '...'
@@ -194,7 +241,7 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
 
         const title = sessionRes.data?.title || 'OpenCode'
         const messages = messagesRes.data || []
-        const lastMessage = messages[messages.length - 1]
+        const lastMessage = messages[messages.length - 1] as Message | undefined
 
         let hasError = false
         let errorMessage = ''
@@ -202,7 +249,7 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
         if (event.type === 'session.error' && event.properties.error) {
           hasError = true
           errorMessage = getErrorMessage(event.properties.error)
-        } else if (lastMessage?.info.role === 'assistant' && lastMessage.info.error) {
+        } else if (lastMessage?.info?.role === 'assistant' && lastMessage.info.error) {
           hasError = true
           errorMessage = getErrorMessage(lastMessage.info.error)
         }
@@ -210,7 +257,7 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
         if (hasError) {
           await sendNotification(`❌ ${title}`, errorMessage)
         } else {
-          const preview = lastMessage ? extractTextPreview(lastMessage.parts as Array<{ type: string; text?: string }>) : 'AI 回复完成'
+          const preview = lastMessage ? extractTextPreview(lastMessage.parts) : 'AI 回复完成'
           await sendNotification(`✅ ${title}`, preview)
         }
       } catch {
