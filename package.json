@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "dev": "bun build src/index.ts --outdir dist --target bun --watch"
+    "dev": "bun build src/index.ts --outdir dist --target bun --watch",
+    "install:plugin": "bun run build && cp dist/index.js ~/.config/opencode/plugins/alarm.js"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "latest",

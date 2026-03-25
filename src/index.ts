@@ -25,7 +25,9 @@ async function sendNotification(title: string, message: string): Promise<void> {
 
 export const AlarmPlugin: Plugin = async () => {
   return {
-    'session.idle': async () => {
+    event: async ({ event }) => {
+      if (event.type !== 'session.idle') return
+      
       const focused = await isTerminalFocused()
       if (focused) return
       
