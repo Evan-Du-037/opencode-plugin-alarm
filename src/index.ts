@@ -1,10 +1,22 @@
 import type { Plugin } from '@opencode-ai/plugin'
+import type { Event } from '@opencode-ai/sdk'
 
 const TERMINAL_APPS = ['Terminal', 'iTerm2', 'WezTerm', 'Alacritty', 'kitty', 'Ghostty']
 const DEBOUNCE_MS = 3000
 const PREVIEW_LENGTH = 30
 
 let lastNotificationTime = 0
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'data' in error) {
+    const data = (error as { data: unknown }).data
+    if (typeof data === 'object' && data !== null && 'message' in data) {
+      const msg = (data as { message: unknown }).message
+      if (typeof msg === 'string') return msg
+    }
+  }
+  return '发生错误'
+}
 
 async function isTerminalFocused(): Promise<boolean> {
   try {
@@ -62,7 +74,7 @@ function extractTextPreview(parts: Array<{ type: string; text?: string }>): stri
 export const AlarmPlugin: Plugin = async ({ client }) => {
   return {
     event: async ({ event }) => {
-      if (event.type !== 'session.idle') return
+      if (event.type !== 'session.idle' && event.type !== 'session.error') return
 
       const now = Date.now()
       if (now - lastNotificationTime < DEBOUNCE_MS) return
@@ -73,6 +85,7 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
       lastNotificationTime = now
 
       const sessionID = event.properties.sessionID
+      if (!sessionID) return
 
       try {
         const [sessionRes, messagesRes] = await Promise.all([
@@ -83,11 +96,26 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
         const title = sessionRes.data?.title || 'OpenCode'
         const messages = messagesRes.data || []
         const lastMessage = messages[messages.length - 1]
-        const preview = lastMessage ? extractTextPreview(lastMessage.parts as Array<{ type: string; text?: string }>) : 'AI 回复完成'
 
-        await sendNotification(title, preview)
+        let hasError = false
+        let errorMessage = ''
+
+        if (event.type === 'session.error' && event.properties.error) {
+          hasError = true
+          errorMessage = getErrorMessage(event.properties.error)
+        } else if (lastMessage?.info.role === 'assistant' && lastMessage.info.error) {
+          hasError = true
+          errorMessage = getErrorMessage(lastMessage.info.error)
+        }
+
+        if (hasError) {
+          await sendNotification(`❌ ${title}`, errorMessage)
+        } else {
+          const preview = lastMessage ? extractTextPreview(lastMessage.parts as Array<{ type: string; text?: string }>) : 'AI 回复完成'
+          await sendNotification(`✅ ${title}`, preview)
+        }
       } catch {
-        await sendNotification('OpenCode', 'AI 回复完成')
+        await sendNotification('✅ OpenCode', 'AI 回复完成')
       }
     }
   }
