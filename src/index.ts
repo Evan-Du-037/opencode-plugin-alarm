@@ -226,6 +226,15 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
                 debugLog('🔥 Error in event handler:', err);
                 await sendNotification('✅ OpenCode', 'AI 回复完成');
             }
+        },
+        "tool.execute.before": async (input) => {
+            if (input.tool === "question") {
+                debugLog('🔔 Question tool invoked');
+                const now = Date.now();
+                if (now - lastNotificationTime < DEBOUNCE_MS) return;
+                lastNotificationTime = now;
+                await sendNotification('❓ OpenCode', '需要你的输入');
+            }
         }
     }
 }
