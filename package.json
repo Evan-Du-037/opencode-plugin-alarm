@@ -8,11 +8,12 @@
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",
     "dev": "bun build src/index.ts --outdir dist --target bun --watch",
-    "install:plugin": "bun run build && cp dist/index.js ~/.config/opencode/plugins/alarm.js"
+    "install:plugin": "bun run build && cp dist/index.js ~/.config/opencode/plugins/opencode-plugin-alarm.js"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.3.2",
     "@types/bun": "^1.3.11",
+    "@types/node": "^25.5.0",
     "typescript": "^5.0.0"
   },
   "author": "",

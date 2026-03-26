@@ -20,7 +20,7 @@ bun install
 
 此脚本会：
 1. 构建插件
-2. 安装到 `~/.config/opencode/plugins/alarm.js`
+2. 安装到 `~/.config/opencode/plugins/opencode-plugin-alarm.js`
 3. 安装 `terminal-notifier` 工具
 
 ### 方法二：手动安装
