@@ -4,15 +4,10 @@ import path from 'path'
 import fs from 'fs'
 
 const TERMINAL_APPS = ['Terminal', 'iTerm2', 'WezTerm', 'Alacritty', 'kitty', 'Ghostty', 'Electron', 'Code']
-const TERMINAL_BUNDLE_IDS: Record<string, string> = {
-  'vscode': 'com.microsoft.VSCode',
-  'Apple_Terminal': 'com.apple.Terminal',
-}
 const DEBOUNCE_MS = 3000
 const PREVIEW_LENGTH = 30
 
 let lastNotificationTime = 0
-let cachedNotifierPath: string | null = null
 
 function getErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error !== null && 'data' in error) {
@@ -32,13 +27,8 @@ function detectTerminalType(): 'vscode' | 'terminal' {
 }
 
 function getTerminalNotifierPath(): string | null {
-  if (cachedNotifierPath !== null) {
-    return cachedNotifierPath
-  }
-
   const homeDir = process.env.HOME || ''
   if (!homeDir) {
-    cachedNotifierPath = null
     return null
   }
 
@@ -55,11 +45,9 @@ function getTerminalNotifierPath(): string | null {
   )
 
   if (fs.existsSync(notifierPath)) {
-    cachedNotifierPath = notifierPath
     return notifierPath
   }
 
-  cachedNotifierPath = null
   return null
 }
 
@@ -119,7 +107,9 @@ async function sendNotificationWithTerminalNotifier(
   terminalType: 'vscode' | 'terminal'
 ): Promise<boolean> {
   const notifierPath = getTerminalNotifierPath()
+  
   if (!notifierPath) {
+    fs.appendFileSync('/tmp/opencode-alarm.log', `[${new Date().toISOString()}] terminal-notifier path not found\n`)
     return false
   }
 
@@ -145,6 +135,9 @@ async function sendNotificationWithTerminalNotifier(
     const result = Bun.spawnSync([notifierPath, ...args], {
       timeout: 5000,
     })
+
+    const logMsg = `[${new Date().toISOString()}] exitCode: ${result.exitCode}, stderr: ${result.stderr?.toString() || ''}\n`
+    fs.appendFileSync('/tmp/opencode-alarm.log', logMsg)
 
     return result.exitCode === 0
   } catch {
