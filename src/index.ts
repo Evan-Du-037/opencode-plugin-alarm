@@ -15,9 +15,11 @@ const TERMINAL_BUNDLE_IDS: Record<string, string> = {
 };
 const DEBOUNCE_MS = 3000;
 const PREVIEW_LENGTH = 30;
+const SKIP_TIMEOUT = 5000;
 
 let lastNotificationTime = 0;
 let cachedNotifierPath: string | null = null;
+const skipIdleNotifications = new Map<string, number>();
 
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null && 'data' in error) {
@@ -181,28 +183,52 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
             debugLog('🔔 Received event', event.type);
 
             if ((event as any).type === 'permission.asked') {
-                const permission = (event as any).properties;
-                debugLog('Permission requested:', permission.title);
+                const props = (event as any).properties;
+                debugLog('Permission asked FULL properties:', JSON.stringify(props, null, 2));
 
                 const now = Date.now();
                 if (now - lastNotificationTime < DEBOUNCE_MS) return;
                 lastNotificationTime = now;
 
-                await sendNotification('🔐 OpenCode', `需要授权: ${permission.title}`);
+                const permissionType = props?.permission || '未知操作';
+                const filepath = props?.metadata?.filepath;
+                const title = filepath ? `${permissionType}: ${filepath}` : permissionType;
+                await sendNotification('🔐 OpenCode', `需要授权: ${title}`);
+                return;
+            }
+
+            if ((event as any).type === 'permission.replied') {
+                const props = (event as any).properties;
+                debugLog('Permission replied FULL properties:', JSON.stringify(props, null, 2));
+
+                const sessionID = props?.sessionID;
+                const reply = props?.reply;
+
+                if (reply === 'reject' && sessionID) {
+                    skipIdleNotifications.set(sessionID, Date.now());
+                    debugLog('Marked session to skip idle notification:', sessionID);
+                }
                 return;
             }
 
             if (event.type !== 'session.idle' && event.type !== 'session.error') return;
+
+            const sessionID = event.properties?.sessionID;
+            debugLog('Session ID:', sessionID);
+            if (!sessionID) return;
+
+            const skipTime = skipIdleNotifications.get(sessionID);
+            if (skipTime && Date.now() - skipTime < SKIP_TIMEOUT) {
+                skipIdleNotifications.delete(sessionID);
+                debugLog('Skipping idle notification due to recent permission reject');
+                return;
+            }
 
             const now = Date.now();
             debugLog(`Time diff: ${now - lastNotificationTime}ms (DEBOUNCE_MS: ${DEBOUNCE_MS})`);
             if (now - lastNotificationTime < DEBOUNCE_MS) return;
 
             lastNotificationTime = now;
-
-            const sessionID = event.properties?.sessionID;
-            debugLog('Session ID:', sessionID);
-            if (!sessionID) return;
 
             try {
                 debugLog('Fetching session & messages...');
