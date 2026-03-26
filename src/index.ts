@@ -180,8 +180,8 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
         event: async ({ event }) => {
             debugLog('🔔 Received event', event.type);
 
-            if (event.type === 'permission.updated') {
-                const permission = event.properties;
+            if ((event as any).type === 'permission.asked') {
+                const permission = (event as any).properties;
                 debugLog('Permission requested:', permission.title);
 
                 const now = Date.now();
