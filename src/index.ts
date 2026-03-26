@@ -179,6 +179,19 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
     return {
         event: async ({ event }) => {
             debugLog('🔔 Received event', event.type);
+
+            if (event.type === 'permission.updated') {
+                const permission = event.properties;
+                debugLog('Permission requested:', permission.title);
+
+                const now = Date.now();
+                if (now - lastNotificationTime < DEBOUNCE_MS) return;
+                lastNotificationTime = now;
+
+                await sendNotification('🔐 OpenCode', `需要授权: ${permission.title}`);
+                return;
+            }
+
             if (event.type !== 'session.idle' && event.type !== 'session.error') return;
 
             const now = Date.now();
