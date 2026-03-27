@@ -255,7 +255,7 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
 
                 const session = sessionRes.data;
                 const isSubagent = session?.parentID !== undefined;
-                const titlePrefix = isSubagent ? '🔄 [子对话] ' : '';
+                const titlePrefix = isSubagent ? '' : '';  //  去掉 [子模型] 标记
                 const title = session?.title || 'OpenCode';
                 const messages = messagesRes.data || [];
                 const lastMessage = messages[messages.length - 1] as Message | undefined;
