@@ -38,36 +38,50 @@ function detectTerminalType(): 'vscode' | 'terminal' {
     return 'terminal';
 }
 
-function getTerminalNotifierPath(): string | null {
-    if (cachedNotifierPath !== null) {
-        return cachedNotifierPath;
+const AGENT_NOTIFIERS: string[] = ['build', 'plan', 'explore', 'general', 'research']
+
+function getNotifierPathForAgent(agent?: string): string | null {
+    const homeDir = process.env.HOME || ''
+    if (!homeDir) return null
+
+    const pluginsDir = path.join(homeDir, '.config', 'opencode', 'plugins')
+
+    if (agent && AGENT_NOTIFIERS.includes(agent)) {
+        const agentNotifierPath = path.join(
+            pluginsDir,
+            'asset',
+            'notifiers',
+            `${agent}.app`,
+            'Contents',
+            'MacOS',
+            'terminal-notifier'
+        )
+        if (fs.existsSync(agentNotifierPath)) {
+            return agentNotifierPath
+        }
     }
 
-    const homeDir = process.env.HOME || '';
-    if (!homeDir) {
-        cachedNotifierPath = null;
-        return null;
-    }
-
-    const notifierPath = path.join(
-        homeDir,
-        '.config',
-        'opencode',
-        'plugins',
+    const defaultNotifierPath = path.join(
+        pluginsDir,
         'bin',
         'terminal-notifier.app',
         'Contents',
         'MacOS',
         'terminal-notifier'
-    );
-
-    if (fs.existsSync(notifierPath)) {
-        cachedNotifierPath = notifierPath;
-        return notifierPath;
+    )
+    if (fs.existsSync(defaultNotifierPath)) {
+        return defaultNotifierPath
     }
 
-    cachedNotifierPath = null;
-    return null;
+    return null
+}
+
+function getTerminalNotifierPath(): string | null {
+    if (cachedNotifierPath !== null) {
+        return cachedNotifierPath
+    }
+    cachedNotifierPath = getNotifierPathForAgent()
+    return cachedNotifierPath
 }
 
 function escapeShellArg(arg: string): string {
@@ -85,9 +99,10 @@ function getCurrentWorkingDirectory(): string | null {
 async function sendNotificationWithTerminalNotifier(
     title: string,
     message: string,
-    terminalType: 'vscode' | 'terminal'
+    terminalType: 'vscode' | 'terminal',
+    agent?: string
 ): Promise<boolean> {
-    const notifierPath = getTerminalNotifierPath()
+    const notifierPath = getNotifierPathForAgent(agent)
     if (!notifierPath) {
         return false
     }
@@ -121,9 +136,9 @@ async function sendNotificationWithTerminalNotifier(
     }
 }
 
-async function sendNotification(title: string, message: string): Promise<void> {
+async function sendNotification(title: string, message: string, agent?: string): Promise<void> {
     const terminalType = detectTerminalType()
-    await sendNotificationWithTerminalNotifier(title, message, terminalType)
+    await sendNotificationWithTerminalNotifier(title, message, terminalType, agent)
 }
 
 function stripMarkdown(text: string): string {
@@ -152,6 +167,7 @@ interface MessagePart {
 interface MessageInfo {
     role?: string
     error?: unknown
+    agent?: string
 }
 
 interface Message {
@@ -259,11 +275,11 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
 
                 if (hasError) {
                     debugLog('Sending error notification');
-                    await sendNotification(`❌ ${titlePrefix}${title}`, errorMessage);
+                    await sendNotification(`❌ ${titlePrefix}${title}`, errorMessage, lastMessage?.info?.agent);
                 } else {
                     const preview = lastMessage ? extractTextPreview(lastMessage.parts) : 'AI 回复完成';
                     debugLog('Sending success notification with preview:', preview);
-                    await sendNotification(`✅ ${titlePrefix}${title}`, preview);
+                    await sendNotification(`✅ ${titlePrefix}${title}`, preview, lastMessage?.info?.agent);
                 }
             } catch (err) {
                 debugLog('🔥 Error in event handler:', err);
