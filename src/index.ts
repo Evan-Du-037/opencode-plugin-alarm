@@ -237,7 +237,10 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
                     client.session.messages({ path: { id: sessionID }, query: { limit: 1 } }),
                 ]);
 
-                const title = sessionRes.data?.title || 'OpenCode';
+                const session = sessionRes.data;
+                const isSubagent = session?.parentID !== undefined;
+                const titlePrefix = isSubagent ? '🔄 [子对话] ' : '';
+                const title = session?.title || 'OpenCode';
                 const messages = messagesRes.data || [];
                 const lastMessage = messages[messages.length - 1] as Message | undefined;
                 debugLog('Title:', title);
@@ -256,11 +259,11 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
 
                 if (hasError) {
                     debugLog('Sending error notification');
-                    await sendNotification(`❌ ${title}`, errorMessage);
+                    await sendNotification(`❌ ${titlePrefix}${title}`, errorMessage);
                 } else {
                     const preview = lastMessage ? extractTextPreview(lastMessage.parts) : 'AI 回复完成';
                     debugLog('Sending success notification with preview:', preview);
-                    await sendNotification(`✅ ${title}`, preview);
+                    await sendNotification(`✅ ${titlePrefix}${title}`, preview);
                 }
             } catch (err) {
                 debugLog('🔥 Error in event handler:', err);
