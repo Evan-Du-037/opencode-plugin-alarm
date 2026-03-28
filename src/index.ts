@@ -9,17 +9,15 @@ function debugLog(msg: string, ...args: any[]) {
     try { fs.appendFileSync(LOG_FILE, line); } catch (e) { }
 }
 
-const TERMINAL_BUNDLE_IDS: Record<string, string> = {
-    'vscode': 'com.microsoft.VSCode',
-    'Apple_Terminal': 'com.apple.Terminal',
-};
 const DEBOUNCE_MS = 3000;
 const PREVIEW_LENGTH = 30;
 const SKIP_TIMEOUT = 5000;
 
 let lastNotificationTime = 0;
-let cachedNotifierPath: string | null = null;
+let projectDirectory = '';
 const skipIdleNotifications = new Map<string, number>();
+
+const AGENT_NOTIFIERS: string[] = ['build', 'plan', 'explore', 'general', 'research']
 
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null && 'data' in error) {
@@ -37,8 +35,6 @@ function detectTerminalType(): 'vscode' | 'terminal' {
     if (termProgram === 'vscode') return 'vscode';
     return 'terminal';
 }
-
-const AGENT_NOTIFIERS: string[] = ['build', 'plan', 'explore', 'general', 'research']
 
 function getNotifierPathForAgent(agent?: string): string | null {
     const homeDir = process.env.HOME || ''
@@ -76,26 +72,6 @@ function getNotifierPathForAgent(agent?: string): string | null {
     return null
 }
 
-function getTerminalNotifierPath(): string | null {
-    if (cachedNotifierPath !== null) {
-        return cachedNotifierPath
-    }
-    cachedNotifierPath = getNotifierPathForAgent()
-    return cachedNotifierPath
-}
-
-function escapeShellArg(arg: string): string {
-    return "'" + arg.replace(/'/g, "'\\''") + "'";
-}
-
-function getCurrentWorkingDirectory(): string | null {
-    try {
-        return process.cwd() || null;
-    } catch {
-        return null;
-    }
-}
-
 async function sendNotificationWithTerminalNotifier(
     title: string,
     message: string,
@@ -103,9 +79,7 @@ async function sendNotificationWithTerminalNotifier(
     agent?: string
 ): Promise<boolean> {
     const notifierPath = getNotifierPathForAgent(agent)
-    if (!notifierPath) {
-        return false
-    }
+    if (!notifierPath) return false
 
     try {
         const args: string[] = [
@@ -115,10 +89,10 @@ async function sendNotificationWithTerminalNotifier(
         ]
 
         if (terminalType === 'vscode') {
-            const cwd = getCurrentWorkingDirectory()
-            if (cwd) {
-                const escapedPath = escapeShellArg(cwd)
-                args.push('-execute', `open -a 'Visual Studio Code' ${escapedPath}`)
+            const dir = projectDirectory || process.cwd()
+            if (dir) {
+                args.push('-group', dir)
+                args.push('-open', `vscode://file${dir}`)
             } else {
                 args.push('-activate', 'com.microsoft.VSCode')
             }
@@ -126,11 +100,13 @@ async function sendNotificationWithTerminalNotifier(
             args.push('-activate', 'com.apple.Terminal')
         }
 
-        const result = Bun.spawnSync([notifierPath, ...args], {
-            timeout: 5000,
+        const proc = Bun.spawn([notifierPath, ...args], {
+            detached: true,
+            stdio: ['ignore', 'ignore', 'ignore'],
         })
+        proc.unref()
 
-        return result.exitCode === 0
+        return true
     } catch {
         return false
     }
@@ -192,27 +168,12 @@ function extractTextPreview(parts: unknown): string {
     return '[此回复为空]'
 }
 
-export const AlarmPlugin: Plugin = async ({ client }) => {
-    debugLog('🚀 Alarm plugin initialized');
+const AlarmPlugin: Plugin = async (input) => {
+    const { client } = input
+    projectDirectory = input.directory
+
     return {
         event: async ({ event }) => {
-            debugLog('🔔 Received event', event.type);
-
-            if ((event as any).type === 'permission.asked') {
-                const props = (event as any).properties;
-                debugLog('Permission asked FULL properties:', JSON.stringify(props, null, 2));
-
-                const now = Date.now();
-                if (now - lastNotificationTime < DEBOUNCE_MS) return;
-                lastNotificationTime = now;
-
-                const permissionType = props?.permission || '未知操作';
-                const filepath = props?.metadata?.filepath;
-                const title = filepath ? `${permissionType}: ${filepath}` : permissionType;
-                await sendNotification('🔐 OpenCode', `需要授权: ${title}`);
-                return;
-            }
-
             if ((event as any).type === 'permission.replied') {
                 const props = (event as any).properties;
                 debugLog('Permission replied FULL properties:', JSON.stringify(props, null, 2));
@@ -254,8 +215,6 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
                 ]);
 
                 const session = sessionRes.data;
-                const isSubagent = session?.parentID !== undefined;
-                const titlePrefix = isSubagent ? '' : '';  //  去掉 [子模型] 标记
                 const title = session?.title || 'OpenCode';
                 const messages = messagesRes.data || [];
                 const lastMessage = messages[messages.length - 1] as Message | undefined;
@@ -275,20 +234,20 @@ export const AlarmPlugin: Plugin = async ({ client }) => {
 
                 if (hasError) {
                     debugLog('Sending error notification');
-                    await sendNotification(`❌ ${titlePrefix}${title}`, errorMessage, lastMessage?.info?.agent);
+                    await sendNotification(`❌ ${title}`, errorMessage, lastMessage?.info?.agent);
                 } else {
                     const preview = lastMessage ? extractTextPreview(lastMessage.parts) : 'AI 回复完成';
                     debugLog('Sending success notification with preview:', preview);
-                    await sendNotification(`✅ ${titlePrefix}${title}`, preview, lastMessage?.info?.agent);
+                    await sendNotification(`✅ ${title}`, preview, lastMessage?.info?.agent);
                 }
             } catch (err) {
-                debugLog('🔥 Error in event handler:', err);
+                debugLog('Error in event handler:', err);
                 await sendNotification('✅ OpenCode', 'AI 回复完成');
             }
         },
         "tool.execute.before": async (input) => {
             if (input.tool === "question") {
-                debugLog('🔔 Question tool invoked');
+                debugLog('Question tool invoked');
                 const now = Date.now();
                 if (now - lastNotificationTime < DEBOUNCE_MS) return;
                 lastNotificationTime = now;
