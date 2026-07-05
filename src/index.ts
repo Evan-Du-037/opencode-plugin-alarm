@@ -174,7 +174,27 @@ const AlarmPlugin: Plugin = async (input) => {
 
     return {
         event: async ({ event }) => {
-            if ((event as any).type === 'permission.replied') {
+            const evType = (event as any).type || '';
+            if (evType.includes('permission')) {
+                debugLog('PERMISSION EVENT:', evType, JSON.stringify((event as any).properties));
+            }
+
+            if (evType === 'permission.asked' || evType === 'permission.updated') {
+                const props = (event as any).properties;
+                const command = props?.metadata?.command;
+                const permissionType = props?.permission;
+                const message = command
+                    ? (command.length > 60 ? command.slice(0, 60) + '...' : command)
+                    : (permissionType || '需要你的授权');
+                debugLog('Permission request detected via event:', evType, 'message:', message);
+                const now = Date.now();
+                if (now - lastNotificationTime < DEBOUNCE_MS) return;
+                lastNotificationTime = now;
+                await sendNotification('🔐 需要权限', message);
+                return;
+            }
+
+            if (evType === 'permission.replied') {
                 const props = (event as any).properties;
                 debugLog('Permission replied FULL properties:', JSON.stringify(props, null, 2));
 
@@ -253,6 +273,17 @@ const AlarmPlugin: Plugin = async (input) => {
                 lastNotificationTime = now;
                 await sendNotification('❓ OpenCode', '需要你的输入');
             }
+        },
+        "permission.ask": async (input, output) => {
+            debugLog('Permission ask:', input.type, input.title, 'status:', output.status);
+            if (output.status !== "ask") return;
+
+            const now = Date.now();
+            if (now - lastNotificationTime < DEBOUNCE_MS) return;
+            lastNotificationTime = now;
+
+            const message = input.title || `请求执行 ${input.type}`;
+            await sendNotification('🔐 需要权限', message);
         }
     }
 }
